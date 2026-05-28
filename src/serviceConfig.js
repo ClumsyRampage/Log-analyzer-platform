@@ -8,7 +8,7 @@ export const SERVICE_CONFIG = {
   // Replace this with your service name.
   name: "your-service",
   displayName: "Your Service",
-  baseUrl: "http://localhost:8081",s
+  baseUrl: "http://localhost:8081",
   healthPath: "/health",
   logPath: "/logs",
 
