@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef } from "react";
 
 const COLORS = {
   critical: "#E24B4A", high: "#EF9F27", medium: "#378ADD",
@@ -30,6 +30,84 @@ const LOG_POOL = [
   { level: "WARN", service: "user-profile-service", msg: "Redis cache miss rate elevated: 34% (threshold: 20%)", traceId: "4b8e2c7d", endpoint: "/api/v1/users/profile", latency: 89 },
   { level: "ERROR", service: "auth-service", msg: "Invalid PKCE challenge for OAuth2 flow, client_id=web-app", traceId: "6c9d1e5f", endpoint: "/api/v1/auth/token", latency: 5 },
 ];
+
+const LOG_INSIGHTS = [
+  {
+    match: (msg) => msg.includes("Database connection pool exhausted"),
+    title: "Connection pool exhaustion",
+    rootCause: "The service is unable to obtain a database connection because the HikariCP pool has reached its max size.",
+    fixes: [
+      "Increase the HikariCP maximum-pool-size",
+      "Optimize slow DB queries to reduce hold time",
+      "Enable connection leak detection and close resources promptly",
+      "Add retry/backoff logic and bulkhead isolation"
+    ]
+  },
+  {
+    match: (msg) => msg.includes("Connection is not available"),
+    title: "DB connection timeout",
+    rootCause: "Requests are timing out waiting for a database connection, often because the pool is saturated or queries are slow.",
+    fixes: [
+      "Verify current active connections and pool usage",
+      "Increase pool size or use connection pooling proxy",
+      "Reduce transaction duration and close connections quickly"
+    ]
+  },
+  {
+    match: (msg) => msg.includes("Connection refused"),
+    title: "Downstream service unavailable",
+    rootCause: "A downstream dependency rejected the connection, likely because it is down, overloaded, or misrouted.",
+    fixes: [
+      "Check the downstream service health and network routing",
+      "Inspect circuit breaker state and backend capacity",
+      "Validate service discovery and endpoint configuration"
+    ]
+  },
+  {
+    match: (msg) => msg.includes("SMTP connection timeout"),
+    title: "Email delivery timeout",
+    rootCause: "The SMTP gateway is timing out, causing notification delivery failures and backlog growth.",
+    fixes: [
+      "Check SMTP gateway availability and timeout settings",
+      "Add retry with exponential backoff for outbound email send",
+      "Isolate email sending from the main processing thread pool"
+    ]
+  },
+  {
+    match: (msg) => msg.includes("OOM: Java heap space"),
+    title: "Java OOM detected",
+    rootCause: "The JVM has run out of heap memory while allocating a large object, often from leaked resources or too-low heap sizing.",
+    fixes: [
+      "Increase JVM heap size with -Xmx and -Xms",
+      "Enable heap dumps on OOM and analyze memory growth",
+      "Fix resource leaks and use try-with-resources for DB/io operations"
+    ]
+  },
+  {
+    match: (msg) => msg.includes("Invalid PKCE challenge"),
+    title: "OAuth PKCE failure",
+    rootCause: "The auth flow failed validation for the PKCE challenge, usually due to a bad client or mismatch in challenge values.",
+    fixes: [
+      "Verify the PKCE challenge and verifier values in the client",
+      "Check OAuth client configuration for redirect URIs",
+      "Inspect request flow for altered or missing code challenge parameters"
+    ]
+  }
+];
+
+function getLogInsight(log) {
+  const insight = LOG_INSIGHTS.find(item => item.match(log.msg));
+  if (insight) return insight;
+  return {
+    title: log.level === "ERROR" || log.level === "FATAL" ? "Investigate this error" : "Log details",
+    rootCause: "Click the log entry to inspect the error message and trace. Correlate with service health or incident context to resolve it.",
+    fixes: [
+      "Review the service logs around this traceId",
+      "Check downstream dependency health",
+      "Validate error thresholds and retry behavior"
+    ]
+  };
+}
 
 const AI_RCAS = [
   {
@@ -180,7 +258,7 @@ function ServiceCard({ svc, selected, onClick }) {
   );
 }
 
-function LogStream({ filter }) {
+function LogStream({ filter, selectedLog, onSelectLog }) {
   const [logs, setLogs] = useState(() => Array.from({ length: 20 }, (_, i) => ({
     id: i, ...LOG_POOL[i % LOG_POOL.length],
     ts: new Date(Date.now() - (20 - i) * 3000).toISOString(),
@@ -203,19 +281,68 @@ function LogStream({ filter }) {
 
   const levelColor = { ERROR: COLORS.critical, FATAL: "#791F1F", WARN: COLORS.high, INFO: COLORS.info, DEBUG: "#888780" };
   const filtered = filter === "ALL" ? logs : logs.filter(l => l.level === filter || l.service === filter);
+  const insight = selectedLog ? getLogInsight(selectedLog) : null;
 
   return (
-    <div style={{ fontFamily: "monospace", fontSize: 11, height: 360, overflowY: "auto", background: "#1a1918", borderRadius: 8, padding: "10px 0" }}>
-      {filtered.map(log => (
-        <div key={log.id} style={{ padding: "3px 14px", display: "flex", gap: 8, alignItems: "flex-start", borderBottom: "1px solid #2c2c2a" }}>
-          <span style={{ color: "#5f5e5a", minWidth: 86, flexShrink: 0 }}>{log.ts.slice(11, 23)}</span>
-          <span style={{ color: levelColor[log.level] || "#aaa", minWidth: 46, fontWeight: 700, flexShrink: 0 }}>{log.level}</span>
-          <span style={{ color: "#9F96E8", minWidth: 120, flexShrink: 0 }}>{log.service}</span>
-          <span style={{ color: "#5DCAA5", minWidth: 80, flexShrink: 0 }}>#{log.traceId}</span>
-          <span style={{ color: "#D3D1C7", flex: 1 }}>{log.msg}</span>
-        </div>
-      ))}
+    <div style={{ fontFamily: "monospace", fontSize: 11 }}>
+      <div style={{ height: 360, overflowY: "auto", background: "#1a1918", borderRadius: 8, padding: "10px 0" }}>
+      {filtered.map(log => {
+        const isSelected = selectedLog?.id === log.id;
+        return (
+          <div key={log.id}
+            onClick={() => onSelectLog(log)}
+            style={{
+              padding: "3px 14px", display: "flex", gap: 8, alignItems: "flex-start", borderBottom: "1px solid #2c2c2a",
+              cursor: "pointer",
+              background: isSelected ? "rgba(83, 74, 183, 0.18)" : "transparent"
+            }}>
+            <span style={{ color: "#5f5e5a", minWidth: 86, flexShrink: 0 }}>{log.ts.slice(11, 23)}</span>
+            <span style={{ color: levelColor[log.level] || "#aaa", minWidth: 46, fontWeight: 700, flexShrink: 0 }}>{log.level}</span>
+            <span style={{ color: "#9F96E8", minWidth: 120, flexShrink: 0 }}>{log.service}</span>
+            <span style={{ color: "#5DCAA5", minWidth: 80, flexShrink: 0 }}>#{log.traceId}</span>
+            <span style={{ color: "#D3D1C7", flex: 1 }}>{log.msg}</span>
+          </div>
+        );
+      })}
       <div ref={bottomRef} />
+    </div>
+
+      {insight && (
+        <div style={{ marginTop: 12, border: "1px solid #e0ded7", borderRadius: 10, background: "white", padding: 16 }}>
+          <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 10 }}>
+            <div style={{ width: 10, height: 10, borderRadius: "50%", background: levelColor[selectedLog.level] || "#888" }} />
+            <div>
+              <div style={{ fontSize: 13, fontWeight: 700, color: "#2c2c2a" }}>Fix guidance for selected log</div>
+              <div style={{ fontSize: 11, color: "#73726c" }}>Click an error to inspect root cause and remediation steps.</div>
+            </div>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 12 }}>
+            <div style={{ background: "#f8f7f2", borderRadius: 8, padding: 12 }}>
+              <div style={{ fontSize: 10, color: "#73726c", marginBottom: 4 }}>Service</div>
+              <div style={{ fontFamily: "monospace", fontSize: 12, color: "#2c2c2a" }}>{selectedLog.service}</div>
+            </div>
+            <div style={{ background: "#f8f7f2", borderRadius: 8, padding: 12 }}>
+              <div style={{ fontSize: 10, color: "#73726c", marginBottom: 4 }}>Endpoint</div>
+              <div style={{ fontFamily: "monospace", fontSize: 12, color: "#2c2c2a" }}>{selectedLog.endpoint}</div>
+            </div>
+          </div>
+          <div style={{ marginBottom: 12 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: "#534AB7", marginBottom: 6 }}>Root Cause</div>
+            <p style={{ margin: 0, color: "#3d3d3a", fontSize: 12, lineHeight: 1.6 }}>{insight.rootCause}</p>
+          </div>
+          <div>
+            <div style={{ fontSize: 11, fontWeight: 700, color: "#0F6E56", marginBottom: 6 }}>Suggested Fixes</div>
+            <div style={{ display: "grid", gap: 8 }}>
+              {insight.fixes.map((fix, index) => (
+                <div key={index} style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
+                  <span style={{ minWidth: 18, height: 18, borderRadius: 18, background: COLORS.success, color: "white", display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 10, fontWeight: 700 }}>{index + 1}</span>
+                  <span style={{ fontSize: 12, color: "#2c2c2a", lineHeight: 1.5 }}>{fix}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -451,14 +578,8 @@ export default function App() {
   const [expandedRCA, setExpandedRCA] = useState("INC-001");
   const [selectedSvc, setSelectedSvc] = useState(null);
   const [logFilter, setLogFilter] = useState("ALL");
+  const [selectedLog, setSelectedLog] = useState(null);
   const [live, setLive] = useState(true);
-  const [ticker, setTicker] = useState(0);
-
-  useEffect(() => {
-    if (!live) return;
-    const t = setInterval(() => setTicker(x => x + 1), 5000);
-    return () => clearInterval(t);
-  }, [live]);
 
   const totalErrors = SERVICES.reduce((a, s) => a + s.errors, 0);
   const criticalCount = SERVICES.filter(s => s.status === "critical").length;
@@ -542,7 +663,7 @@ export default function App() {
                   ))}
                 </div>
               </div>
-              <LogStream filter={logFilter} />
+              <LogStream filter={logFilter} selectedLog={selectedLog} onSelectLog={setSelectedLog} />
             </div>
           </div>
         )}
@@ -622,7 +743,7 @@ export default function App() {
             <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 16 }}>Incident Timeline</div>
             <div style={{ position: "relative", paddingLeft: 24 }}>
               <div style={{ position: "absolute", left: 8, top: 0, bottom: 0, width: 2, background: "#f1efe8" }} />
-              {INCIDENTS.map((inc, i) => {
+              {INCIDENTS.map(inc => {
                 const sevColor = { critical: COLORS.critical, high: COLORS.high, medium: COLORS.medium, low: COLORS.success }[inc.severity];
                 return (
                   <div key={inc.id} style={{ position: "relative", marginBottom: 20 }}>
@@ -658,7 +779,7 @@ export default function App() {
                 <div style={{ width: 6, height: 6, borderRadius: "50%", background: "#1D9E75", animation: "pulse 1.5s infinite" }} />
                 <span style={{ fontSize: 10, color: "#5f5e5a", fontFamily: "monospace", marginLeft: "auto" }}>go-log-collector · kafka://log-events</span>
               </div>
-              <LogStream filter={logFilter} />
+              <LogStream filter={logFilter} selectedLog={selectedLog} onSelectLog={setSelectedLog} />
             </div>
           </div>
         )}

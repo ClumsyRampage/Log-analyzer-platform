@@ -1,16 +1,38 @@
-# React + Vite
+# Log Analyzer Platform
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+A React + Vite observability dashboard demo with live log telemetry, incident analysis, and remediation guidance.
 
-Currently, two official plugins are available:
+## What it does
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+- Shows service health, alerts, incident status, and error trends.
+- Displays live logs with filters for severity and service.
+- Provides clickable error log entries that show root cause and suggested fixes.
+- Includes AI-style RCA cards and a service dependency map.
 
-## React Compiler
+## Structure
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+- `src/App.jsx` — main dashboard UI and demo data
+- `src/main.jsx` — React app entry point
+- `src/index.css`, `src/App.css` — styling
+- `vite.config.js` — build configuration
 
-## Expanding the ESLint configuration
+## How to run
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+```bash
+npm install
+npm run dev
+```
+
+Then open the local URL shown by Vite.
+
+## Build
+
+```bash
+npm run build
+npm run preview
+```
+
+## Notes
+
+- This is a frontend demo using hard-coded sample data.
+- No backend integration is included.
